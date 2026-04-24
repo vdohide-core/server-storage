@@ -162,9 +162,9 @@ cd "$APP_DIR"
 # Determine architecture
 ARCH=$(uname -m)
 if [ "$ARCH" = "x86_64" ]; then
-    BINARY="server-storage-linux"
+    BINARY="linux"
 elif [ "$ARCH" = "aarch64" ]; then
-    BINARY="server-storage-linux-arm64"
+    BINARY="linux-arm64"
 else
     print_error "Unsupported architecture: $ARCH"
     exit 1
