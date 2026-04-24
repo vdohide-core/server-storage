@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"log"
+	"os/exec"
 	"server-storage/internal/db/database"
 	"server-storage/internal/db/models"
 	"server-storage/internal/storage"
@@ -107,6 +108,15 @@ func (h *Handler) CleanupDeletedMedia(ctx context.Context) (int, error) {
 
 	if err := cursor.Err(); err != nil {
 		return deletedCount, err
+	}
+
+	// Reload nginx to release cached file descriptors so disk space is freed immediately
+	if deletedCount > 0 {
+		if err := exec.Command("nginx", "-s", "reload").Run(); err != nil {
+			log.Printf("⚠️ nginx reload after cleanup failed: %v", err)
+		} else {
+			log.Printf("🔄 nginx reloaded — released file descriptors for %d deleted files", deletedCount)
+		}
 	}
 
 	return deletedCount, nil
