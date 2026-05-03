@@ -7,7 +7,7 @@ import (
 )
 
 // Starred represents a user's starred (bookmarked) file.
-// Collection: "starreds" | _id: String (UUID)
+// Collection: "starred" | _id: String (UUID)
 type Starred struct {
 	ID        string    `bson:"_id" json:"id" goose:"required,default:uuid"`
 	UserID    string    `bson:"userId" json:"userId" goose:"ref:user,index"`
@@ -16,5 +16,5 @@ type Starred struct {
 	UpdatedAt time.Time `bson:"updatedAt" json:"updatedAt" goose:"default:now"`
 }
 
-// StarredModel is the goose model for the "starreds" collection.
-var StarredModel = goose.NewModel[Starred]("starreds")
+// StarredModel is the goose model for the "starred" collection.
+var StarredModel = goose.NewModel[Starred]("starred")

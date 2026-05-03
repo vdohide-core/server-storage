@@ -56,7 +56,8 @@ type Media struct {
 	Path       *string                 `bson:"path,omitempty" json:"path,omitempty"`
 	SourceHash *string                 `bson:"sourceHash,omitempty" json:"sourceHash,omitempty" goose:"index"`
 	FileID     *string                 `bson:"fileId,omitempty" json:"fileId,omitempty" goose:"ref:files,index"`
-	ClonedFrom *string                 `bson:"clonedFrom,omitempty" json:"clonedFrom,omitempty" goose:"ref:files,index"`
+	UserID     *string                 `bson:"userId,omitempty" json:"userId,omitempty" goose:"ref:user,index"`
+	ClonedFrom *string                 `bson:"clonedFrom,omitempty" json:"clonedFrom,omitempty" goose:"ref:medias,index"`
 	Metadata   *MediaMetadata          `bson:"metadata,omitempty" json:"metadata,omitempty"`
 	Prewarm    map[string]PrewarmEntry `bson:"prewarm,omitempty" json:"prewarm,omitempty"`
 	DeletedAt  *time.Time              `bson:"deletedAt,omitempty" json:"deletedAt,omitempty"`

@@ -17,6 +17,8 @@ type User struct {
 	TwoFactorEnabled bool      `bson:"twoFactorEnabled" json:"twoFactorEnabled"`
 	Role             string    `bson:"role" json:"role"`   // user, admin, super_admin, developer
 	Image            *string   `bson:"image" json:"image"` // nullable
+	Country          *string   `bson:"country,omitempty" json:"country,omitempty"`
+	IsDelete         bool      `bson:"isDelete" json:"isDelete"`
 	CreatedAt        time.Time `bson:"createdAt" json:"createdAt"`
 	UpdatedAt        time.Time `bson:"updatedAt" json:"updatedAt"`
 }
