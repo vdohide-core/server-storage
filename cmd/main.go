@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
 	"server-storage/internal/config"
 	"server-storage/internal/db/database"
 	"server-storage/internal/handlers"
 	"server-storage/internal/storage"
+	"syscall"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -55,8 +58,11 @@ func main() {
 	log.Printf("📁 Storage Path: %s", storagePath)
 	log.Printf("🆔 Storage ID: %s", storageID)
 
+	// Create cancellable context listening to OS signals for graceful shutdown
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	// Update disk usage on startup
-	ctx := context.Background()
 	if err := updateDiskUsage(ctx); err != nil {
 		log.Println("⚠️ Failed to update disk usage:", err)
 	}
@@ -65,9 +71,15 @@ func main() {
 	go func() {
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			if err := updateDiskUsage(context.Background()); err != nil {
-				log.Println("⚠️ Failed to update disk usage:", err)
+		for {
+			select {
+			case <-ctx.Done():
+				log.Println("🛑 Stopping disk usage update worker")
+				return
+			case <-ticker.C:
+				if err := updateDiskUsage(ctx); err != nil {
+					log.Println("⚠️ Failed to update disk usage:", err)
+				}
 			}
 		}
 	}()
@@ -82,12 +94,18 @@ func main() {
 	go func() {
 		ticker := time.NewTicker(1 * time.Minute)
 		defer ticker.Stop()
-		for range ticker.C {
-			count, err := h.CleanupDeletedMedia(context.Background())
-			if err != nil {
-				log.Printf("⚠️ Cleanup error: %v", err)
-			} else if count > 0 {
-				log.Printf("🗑️ Cleaned up %d deleted media files", count)
+		for {
+			select {
+			case <-ctx.Done():
+				log.Println("🛑 Stopping deleted media cleanup worker")
+				return
+			case <-ticker.C:
+				count, err := h.CleanupDeletedMedia(ctx)
+				if err != nil {
+					log.Printf("⚠️ Cleanup error: %v", err)
+				} else if count > 0 {
+					log.Printf("🗑️ Cleaned up %d deleted media files", count)
+				}
 			}
 		}
 	}()
@@ -95,8 +113,6 @@ func main() {
 	// Routes
 	http.HandleFunc("/api/health", h.Health)
 	http.HandleFunc("/", h.Home)
-
-	fmt.Printf("Server started at http://localhost:%s\n", port)
 
 	// CORS middleware
 	corsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -110,8 +126,31 @@ func main() {
 		http.DefaultServeMux.ServeHTTP(w, r)
 	})
 
-	if err := http.ListenAndServe(":"+port, corsHandler); err != nil {
-		log.Println("Error starting server:", err)
+	server := &http.Server{
+		Addr:    ":" + port,
+		Handler: corsHandler,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		fmt.Printf("Server started at http://localhost:%s\n", port)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("Error starting server: %v", err)
+		}
+	}()
+
+	// Wait for termination signal
+	<-ctx.Done()
+	log.Println("🔄 Shutting down server gracefully...")
+
+	// Create a timeout context for the shutdown (5 seconds)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Printf("⚠️ Server shutdown failed: %v", err)
+	} else {
+		log.Println("✅ Server gracefully stopped")
 	}
 }
 

@@ -16,6 +16,7 @@ PORT="8888"
 MONGODB_URI=""
 STORAGE_ID=""
 STORAGE_PATH="/home/files"
+NGINX_PATH="/usr/sbin/nginx"
 UNINSTALL=false
 
 APP_NAME="server-storage"
@@ -52,6 +53,10 @@ while [[ $# -gt 0 ]]; do
             STORAGE_PATH="$2"
             shift 2
             ;;
+        --nginx-path)
+            NGINX_PATH="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Server Storage Installer"
             echo ""
@@ -63,6 +68,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --mongodb-uri URI    MongoDB connection string"
             echo "  --storage-id ID      Storage server identifier (required)"
             echo "  --storage-path DIR   Storage path (default: /home/files)"
+            echo "  --nginx-path PATH    Nginx executable path (default: /usr/sbin/nginx)"
             echo "  -h, --help           Show this help message"
             echo ""
             echo "Examples:"
@@ -183,6 +189,7 @@ MONGODB_URI=$MONGODB_URI
 PORT=$PORT
 STORAGE_ID=$STORAGE_ID
 STORAGE_PATH=$STORAGE_PATH
+NGINX_PATH=$NGINX_PATH
 EOF
 print_status ".env file created."
 if [ -z "$MONGODB_URI" ] || [ -z "$STORAGE_ID" ]; then

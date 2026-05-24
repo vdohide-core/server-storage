@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os/exec"
+	"server-storage/internal/config"
 	"server-storage/internal/db/database"
 	"server-storage/internal/db/models"
 	"server-storage/internal/storage"
@@ -36,13 +37,7 @@ func (h *Handler) CleanupDeletedMedia(ctx context.Context) (int, error) {
 		}
 
 		// Resolve the effective file ID (where the physical file lives)
-		effectiveId := ""
-		if media.FileID != nil {
-			effectiveId = *media.FileID
-		}
-		if media.ClonedFrom != nil && *media.ClonedFrom != "" {
-			effectiveId = *media.ClonedFrom
-		}
+		effectiveId := media.EffectiveFileID()
 
 		// Filter: other active media that resolves to the same effectiveId
 		sameSourceFilter := bson.M{
@@ -76,7 +71,7 @@ func (h *Handler) CleanupDeletedMedia(ctx context.Context) (int, error) {
 			if media.FileName != nil {
 				fileName = *media.FileName
 			}
-			sameSourceFilter["file_name"] = fileName
+			sameSourceFilter["fileName"] = fileName
 			count, err := database.Medias().CountDocuments(ctx, sameSourceFilter)
 			if err != nil {
 				log.Printf("⚠️ Failed to count refs for %s: %v", media.ID, err)
@@ -112,7 +107,7 @@ func (h *Handler) CleanupDeletedMedia(ctx context.Context) (int, error) {
 
 	// Reload nginx to release cached file descriptors so disk space is freed immediately
 	if deletedCount > 0 {
-		nginxBin := "/usr/sbin/nginx"
+		nginxBin := config.AppConfig.NginxPath
 		if _, err := exec.LookPath(nginxBin); err != nil {
 			nginxBin = "nginx" // fallback
 		}

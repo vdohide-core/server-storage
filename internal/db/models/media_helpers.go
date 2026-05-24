@@ -1,8 +1,8 @@
 package models
 
-// effectiveFileId returns ClonedFrom if set, otherwise FileID.
+// EffectiveFileID returns ClonedFrom if set, otherwise FileID.
 // Cloned media shares the original file, so paths must resolve to the source.
-func (m *Media) effectiveFileId() string {
+func (m *Media) EffectiveFileID() string {
 	if m.ClonedFrom != nil && *m.ClonedFrom != "" {
 		return *m.ClonedFrom
 	}
@@ -19,10 +19,10 @@ func (m *Media) GetFilePath(storagePath string) string {
 	if m.FileName != nil {
 		fileName = *m.FileName
 	}
-	return storagePath + "/" + m.effectiveFileId() + "/" + fileName
+	return storagePath + "/" + m.EffectiveFileID() + "/" + fileName
 }
 
 // GetFolderPath returns the folder path containing the file
 func (m *Media) GetFolderPath(storagePath string) string {
-	return storagePath + "/" + m.effectiveFileId()
+	return storagePath + "/" + m.EffectiveFileID()
 }
