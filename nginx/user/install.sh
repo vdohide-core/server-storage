@@ -150,13 +150,17 @@ chown -R "${UBUNTU_USER}:${SHARED_GROUP}" "$STORAGE_PATH"
 # Set permissions: 2775 = rwx for owner+group, r-x for others, setgid for auto group inheritance
 chmod -R 2775 "$STORAGE_PATH"
 
-# Set default ACL so new files/dirs inherit group-write
+# Set default ACL so new files/dirs inherit user+group write
+# d:u = default ACL for user (vdohide gets rwx on new files even if created by root)
+# d:g = default ACL for group (www-data gets rwx on new files)
 if command -v setfacl >/dev/null 2>&1; then
-    setfacl -R -m d:g:${SHARED_GROUP}:rwx -m g:${SHARED_GROUP}:rwx "$STORAGE_PATH" || true
+    setfacl -R -m d:u:${UBUNTU_USER}:rwx -m u:${UBUNTU_USER}:rwx \
+               -m d:g:${SHARED_GROUP}:rwx -m g:${SHARED_GROUP}:rwx "$STORAGE_PATH" || true
 else
     print_status "Installing acl package..."
     apt-get update -y && apt-get install -y acl
-    setfacl -R -m d:g:${SHARED_GROUP}:rwx -m g:${SHARED_GROUP}:rwx "$STORAGE_PATH" || true
+    setfacl -R -m d:u:${UBUNTU_USER}:rwx -m u:${UBUNTU_USER}:rwx \
+               -m d:g:${SHARED_GROUP}:rwx -m g:${SHARED_GROUP}:rwx "$STORAGE_PATH" || true
 fi
 
 # Quick test write
