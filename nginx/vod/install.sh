@@ -109,10 +109,13 @@ http {
   gzip on;
   gzip_types application/vnd.apple.mpegurl application/dash+xml text/xml text/vtt application/json;
 
-  # Cap concurrent sprite generation (CPU protection). Keyed globally so the
-  # limit applies across all clients/CF. 429 is not cached by CF, so retries work.
-  limit_conn_zone \$server_name zone=sprite_gen:1m;
-  limit_conn_status 429;
+  # Throttle sprite generation to protect CPU WITHOUT dropping requests.
+  # limit_req queues excess requests and releases them at 'rate'; with a large
+  # 'burst' the queue effectively never overflows, so nothing is rejected -
+  # requests just WAIT their turn and are answered when ready.
+  # rate=8r/s caps sustained CPU; burst=300 holds a full fast-scrub queue.
+  limit_req_zone \$server_name zone=sprite_gen:10m rate=8r/s;
+  limit_req_status 429;
 
   # VOD global settings
   aio threads;
@@ -297,10 +300,10 @@ http {
       vod_sprite_interval 1000;
       vod_sprite_tile_height 168;
 
-      # Limit concurrent sprite generation to protect CPU on small boxes.
-      # Each generation is CPU-heavy and blocks a worker; on a 2-core host
-      # cap to 1 so streaming keeps a free core. Excess returns 429 (CF/player retries).
-      limit_conn sprite_gen 1;
+      # Queue (don't reject) sprite generation: excess requests WAIT in the queue
+      # and are served at the zone rate. Large burst => effectively no 429, every
+      # request gets answered (just later). No 'nodelay' so they are delayed, not dropped.
+      limit_req zone=sprite_gen burst=300;
 
       add_header Access-Control-Allow-Headers '*';
       add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
@@ -664,7 +667,7 @@ server {
     proxy_hide_header Access-Control-Allow-Methods;
 
     add_header Access-Control-Allow-Origin '*' always;
-    # no 'always' so 429/5xx (e.g. limit_conn) are NOT cached as immutable
+    # no 'always' so 429/5xx (e.g. limit_req overflow) are NOT cached as immutable
     add_header Cache-Control 'public, max-age=31536000, immutable';
     add_header Content-Type 'image/jpeg';
   }
