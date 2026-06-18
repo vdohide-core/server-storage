@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"server-storage/internal/db/database"
 	"server-storage/internal/db/models"
 	"strings"
 	"time"
@@ -76,7 +75,7 @@ func (h *Handler) findVideoMedia(r *http.Request, slug string) (*models.Media, e
 	defer cancel()
 
 	var media models.Media
-	err := database.Medias().FindOne(ctx, bson.M{
+	err := models.MediaModel.Col().FindOne(ctx, bson.M{
 		"type":       models.MediaTypeVideo,
 		"slug":       slug,
 		"storageId":  h.StorageId,

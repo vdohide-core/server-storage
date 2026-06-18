@@ -3,7 +3,7 @@ package models
 import (
 	"time"
 
-	"server-storage/internal/lib/goose"
+	"github.com/zergolf1994/goose"
 )
 
 // Starred represents a user's starred (bookmarked) file.

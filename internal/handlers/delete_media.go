@@ -5,7 +5,6 @@ import (
 	"log"
 	"os/exec"
 	"server-storage/internal/config"
-	"server-storage/internal/db/database"
 	"server-storage/internal/db/models"
 	"server-storage/internal/storage"
 
@@ -21,7 +20,7 @@ func (h *Handler) CleanupDeletedMedia(ctx context.Context) (int, error) {
 	}
 
 	opts := options.Find().SetLimit(100)
-	cursor, err := database.Medias().Find(ctx, filter, opts)
+	cursor, err := models.MediaModel.Col().Find(ctx, filter, opts)
 	if err != nil {
 		return 0, err
 	}
@@ -53,7 +52,7 @@ func (h *Handler) CleanupDeletedMedia(ctx context.Context) (int, error) {
 		if media.Type == models.MediaTypeThumbnail {
 			// Thumbnail → check if other active thumbnail uses the same source
 			sameSourceFilter["type"] = models.MediaTypeThumbnail
-			count, err := database.Medias().CountDocuments(ctx, sameSourceFilter)
+			count, err := models.MediaModel.Col().CountDocuments(ctx, sameSourceFilter)
 			if err != nil {
 				log.Printf("⚠️ Failed to count refs for %s: %v", media.ID, err)
 			} else if count == 0 {
@@ -72,7 +71,7 @@ func (h *Handler) CleanupDeletedMedia(ctx context.Context) (int, error) {
 				fileName = *media.FileName
 			}
 			sameSourceFilter["fileName"] = fileName
-			count, err := database.Medias().CountDocuments(ctx, sameSourceFilter)
+			count, err := models.MediaModel.Col().CountDocuments(ctx, sameSourceFilter)
 			if err != nil {
 				log.Printf("⚠️ Failed to count refs for %s: %v", media.ID, err)
 			} else if count == 0 {
@@ -87,7 +86,7 @@ func (h *Handler) CleanupDeletedMedia(ctx context.Context) (int, error) {
 		}
 
 		// Always delete the media document from database
-		if _, err := database.Medias().DeleteOne(ctx, bson.M{"_id": media.ID}); err != nil {
+		if _, err := models.MediaModel.Col().DeleteOne(ctx, bson.M{"_id": media.ID}); err != nil {
 			log.Printf("⚠️ Failed to delete media document %s: %v", media.ID, err)
 			continue
 		}

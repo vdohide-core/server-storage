@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"server-storage/internal/db/database"
 	"server-storage/internal/db/models"
 	"strings"
 	"time"
@@ -43,7 +42,7 @@ func (h *Handler) ServeFile(w http.ResponseWriter, r *http.Request, slug, subPat
 	defer cancel()
 
 	var file models.File
-	err := database.Files().FindOne(ctx, bson.M{
+	err := models.FileModel.Col().FindOne(ctx, bson.M{
 		"slug": slug,
 	}).Decode(&file)
 	if err != nil {

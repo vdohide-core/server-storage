@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"server-storage/internal/config"
 	"server-storage/internal/db/database"
+	"server-storage/internal/db/models"
 	"server-storage/internal/handlers"
 	"server-storage/internal/storage"
 	"syscall"
@@ -182,7 +183,7 @@ func updateDiskUsage(ctx context.Context) error {
 		},
 	}
 
-	result, err := database.Storages().UpdateOne(ctx, filter, update)
+	result, err := models.StorageModel.Col().UpdateOne(ctx, filter, update)
 	if err != nil {
 		return err
 	}

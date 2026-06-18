@@ -3,7 +3,7 @@ package models
 import (
 	"time"
 
-	"server-storage/internal/lib/goose"
+	"github.com/zergolf1994/goose"
 )
 
 // PlayerConfig holds video player configuration for a custom domain.
@@ -32,11 +32,30 @@ type PlayerConfig struct {
 	SeekStep        int     `bson:"seekStep" json:"seekStep"`
 }
 
-// DomainAds holds advertisement configuration.
-type DomainAds struct {
-	Video  []string `bson:"video" json:"video"`
-	Image  []string `bson:"image" json:"image"`
-	Script []string `bson:"script" json:"script"`
+// AdsContent is an embedded advert item stored on the domain.
+type AdsContent struct {
+	ID          string   `bson:"_id" json:"id"`
+	Enabled     bool     `bson:"enabled" json:"enabled"`
+	Name        string   `bson:"name" json:"name"`
+	Mp4URL      *string  `bson:"mp4Url,omitempty" json:"mp4Url,omitempty"`
+	SkipSeconds *int     `bson:"skipSeconds,omitempty" json:"skipSeconds,omitempty"`
+	ImageURL    *string  `bson:"imageUrl,omitempty" json:"imageUrl,omitempty"`
+	ShowOn      []string `bson:"showOn,omitempty" json:"showOn,omitempty"`
+	WebsiteURL  *string  `bson:"websiteUrl,omitempty" json:"websiteUrl,omitempty"`
+	Script      *string  `bson:"script,omitempty" json:"script,omitempty"`
+}
+
+// DomainAdvertCategory groups adverts by type with an enable switch.
+type DomainAdvertCategory struct {
+	Enabled bool         `bson:"enabled" json:"enabled"`
+	List    []AdsContent `bson:"list" json:"list"`
+}
+
+// DomainAdverts holds embedded video, image, and script adverts on a domain.
+type DomainAdverts struct {
+	Video  DomainAdvertCategory `bson:"video" json:"video"`
+	Image  DomainAdvertCategory `bson:"image" json:"image"`
+	Script DomainAdvertCategory `bson:"script" json:"script"`
 }
 
 // DomainDNS holds DNS configuration for domain verification.
@@ -45,23 +64,32 @@ type DomainDNS struct {
 	Value             string     `bson:"value" json:"value"`
 	TTL               int        `bson:"ttl" json:"ttl"`
 	VerificationToken string     `bson:"verificationToken" json:"verificationToken"`
+	RetryCount        int        `bson:"retryCount" json:"retryCount"`
 	LastVerified      *time.Time `bson:"lastVerified,omitempty" json:"lastVerified,omitempty"`
+	Reason            *string    `bson:"reason,omitempty" json:"reason,omitempty"`
 }
 
 // CustomDomain represents a custom domain with player/ad config.
 // Collection: "custom_domains" | _id: String (UUID)
 type CustomDomain struct {
-	ID        string        `bson:"_id" json:"id" goose:"required,default:uuid"`
-	Enable    bool          `bson:"enable" json:"enable"`
-	Name      string        `bson:"name" json:"name" goose:"required,unique"`
-	Status    string        `bson:"status" json:"status" goose:"default:pending"` // pending, active, failed, expired
-	CreatorID *string       `bson:"creatorId,omitempty" json:"creatorId,omitempty" goose:"ref:user,index"`
-	SpaceID   *string       `bson:"spaceId,omitempty" json:"spaceId,omitempty" goose:"ref:workspaces,index"`
-	DNS       *DomainDNS    `bson:"dns,omitempty" json:"dns,omitempty"`
-	Player    *PlayerConfig `bson:"player,omitempty" json:"player,omitempty"`
-	Ads       *DomainAds    `bson:"ads,omitempty" json:"ads,omitempty"`
-	CreatedAt time.Time     `bson:"createdAt" json:"createdAt" goose:"default:now"`
-	UpdatedAt time.Time     `bson:"updatedAt" json:"updatedAt" goose:"default:now"`
+	ID        string         `bson:"_id" json:"id" goose:"required,default:uuid"`
+	Enable    bool           `bson:"enable" json:"enable"`
+	Name      string         `bson:"name" json:"name" goose:"required,unique"`
+	Status    string         `bson:"status" json:"status" goose:"default:pending"` // pending, active, failed, expired
+	CreatorID *string        `bson:"creatorId,omitempty" json:"creatorId,omitempty" goose:"ref:user,index"`
+	SpaceID   *string        `bson:"spaceId,omitempty" json:"spaceId,omitempty" goose:"ref:workspaces,index"`
+	Slug      string         `bson:"slug" json:"slug" goose:"unique,default:random(11),index"`
+	DNS       *DomainDNS     `bson:"dns,omitempty" json:"dns,omitempty"`
+	Player    *PlayerConfig  `bson:"player,omitempty" json:"player,omitempty"`
+	Adverts   *DomainAdverts `bson:"adverts,omitempty" json:"adverts,omitempty"`
+	CreatedAt time.Time      `bson:"createdAt" json:"createdAt" goose:"default:now"`
+	UpdatedAt time.Time      `bson:"updatedAt" json:"updatedAt" goose:"default:now"`
+}
+
+// DomainVastEntry is the minimal domain data synced for VAST serving.
+type DomainVastEntry struct {
+	Slug    string         `bson:"slug" json:"slug"`
+	Adverts *DomainAdverts `bson:"adverts,omitempty" json:"adverts,omitempty"`
 }
 
 // CustomDomainModel is the goose model for the "custom_domains" collection.

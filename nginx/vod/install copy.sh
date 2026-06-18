@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# v6: Install nginx-vod-module — nginx 1.26.3 from source + static module
-# Features: HLS, DASH, Thumbnail, Sprite Sheet (via system FFmpeg)
+# v4: Install nginx-vod-module — nginx 1.26.3 from source + static module
+# Fixes: FFmpeg 6.x crash, "upstream is null" crash, ABI mismatch
 # Tested on Ubuntu 24.04
 set -euo pipefail
 
@@ -25,7 +25,6 @@ DEBIAN_FRONTEND=noninteractive apt -y install \
   build-essential git curl ca-certificates \
   libpcre2-dev zlib1g-dev libssl-dev \
   libxml2-dev libxslt1-dev libgd-dev \
-  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
   nload
 
 WORKDIR="${HOME}/build/nginx-vod"
@@ -44,10 +43,14 @@ tar xzf "nginx-${NGX_VERSION}.tar.gz"
 # Clone Kaltura nginx-vod-module (latest)
 log "Cloning Kaltura nginx-vod-module..."
 rm -rf nginx-vod-module
-git clone --depth=1 https://github.com/vdohide/nginx-vod-module.git
+git clone --depth=1 https://github.com/kaltura/nginx-vod-module.git
 
-# FFmpeg dev headers are installed for thumbnail support
-# nginx-vod-module auto-detects libavcodec/libswscale during configure
+# Hide FFmpeg headers to avoid linking (FFmpeg 6.x causes segfault)
+log "Hiding FFmpeg headers to prevent linking..."
+for d in libavcodec libavformat libavutil libswscale libavfilter; do
+  [[ -d "/usr/include/x86_64-linux-gnu/$d" ]] && \
+    mv "/usr/include/x86_64-linux-gnu/$d" "/usr/include/x86_64-linux-gnu/${d}.bak" || true
+done
 
 # Build nginx + vod module (STATIC, not dynamic)
 log "Building nginx ${NGX_VERSION} with vod module (static)..."
@@ -67,6 +70,13 @@ cd "nginx-${NGX_VERSION}"
 
 make -j"$(nproc)"
 make install
+
+# Restore FFmpeg headers
+log "Restoring FFmpeg headers..."
+for d in libavcodec libavformat libavutil libswscale libavfilter; do
+  [[ -d "/usr/include/x86_64-linux-gnu/${d}.bak" ]] && \
+    mv "/usr/include/x86_64-linux-gnu/${d}.bak" "/usr/include/x86_64-linux-gnu/$d" || true
+done
 
 [[ -f "${INSTALL_PREFIX}/sbin/nginx" ]] || err "Build failed"
 log "nginx binary: ${INSTALL_PREFIX}/sbin/nginx"
@@ -108,11 +118,6 @@ http {
 
   gzip on;
   gzip_types application/vnd.apple.mpegurl application/dash+xml text/xml text/vtt application/json;
-
-  # Cap concurrent sprite generation (CPU protection). Keyed globally so the
-  # limit applies across all clients/CF. 429 is not cached by CF, so retries work.
-  limit_conn_zone \$server_name zone=sprite_gen:1m;
-  limit_conn_status 429;
 
   # VOD global settings
   aio threads;
@@ -276,36 +281,11 @@ http {
       expires 1h;
     }
 
-    # Thumbnail capture
-    location /thumb/ {
-      vod thumb;
-      vod_thumb_accurate_positioning off;
-
-      add_header Access-Control-Allow-Headers '*';
-      add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
-      add_header Access-Control-Allow-Origin '*';
-      add_header Cache-Control 'public, max-age=31536000, immutable' always;
-    }
-
-    # Sprite sheet (6x6 grid, 1s interval)
-    # height-primary: fixed tile height (160px), width derived from aspect ratio
-    # so portrait/landscape videos share the same tile height.
-    location /sprite/ {
-      vod sprite;
-      vod_sprite_cols 6;
-      vod_sprite_rows 6;
-      vod_sprite_interval 1000;
-      vod_sprite_tile_height 168;
-
-      # Limit concurrent sprite generation to protect CPU on small boxes.
-      # Each generation is CPU-heavy and blocks a worker; on a 2-core host
-      # cap to 1 so streaming keeps a free core. Excess returns 429 (CF/player retries).
-      limit_conn sprite_gen 1;
-
-      add_header Access-Control-Allow-Headers '*';
-      add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
-      add_header Access-Control-Allow-Origin '*';
-    }
+    # Thumbnail - disabled (requires FFmpeg 4.x)
+    # To enable: rebuild with FFmpeg 4.4 from source
+    # location /thumb/ {
+    #   vod thumb;
+    # }
 
     location /vod_status {
       vod_status;
@@ -606,70 +586,7 @@ server {
     server_tokens off;
   }
 
-  # Pattern 7: Thumbnail proxy
-  # /test/thumb-5000.jpg -> /thumb/test.json/thumb-5000.jpg
-  # /test/thumb-5000-w320.jpg -> /thumb/test.json/thumb-5000-w320.jpg
-  location ~ ^/([^/]+)/(thumb-[0-9].*\.jpg)$ {
-    if ($request_method = OPTIONS) {
-      add_header Access-Control-Allow-Origin * always;
-      add_header Access-Control-Allow-Headers '*' always;
-      add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS' always;
-      add_header Content-Length 0;
-      add_header Content-Type text/plain;
-      return 204;
-    }
-
-    proxy_http_version 1.1;
-    proxy_set_header Connection "";
-    proxy_set_header Host $host;
-    proxy_pass http://127.0.0.1:8889/thumb/$1.json/$2;
-
-    proxy_hide_header Access-Control-Allow-Origin;
-    proxy_hide_header Access-Control-Allow-Headers;
-    proxy_hide_header Access-Control-Allow-Methods;
-
-    add_header Access-Control-Allow-Origin '*' always;
-    add_header Cache-Control 'public, max-age=31536000, immutable' always;
-    add_header Content-Type 'image/jpeg' always;
-  }
-
-  # Pattern 8: Sprite WebVTT proxy
-  # /test/sprite.vtt -> /sprite/test.json/sprite.vtt
-  location ~ ^/([^/]+)/sprite\.vtt$ {
-    proxy_http_version 1.1;
-    proxy_set_header Connection "";
-    proxy_set_header Host $host;
-    proxy_pass http://127.0.0.1:8889/sprite/$1.json/sprite.vtt;
-
-    proxy_hide_header Access-Control-Allow-Origin;
-    proxy_hide_header Access-Control-Allow-Headers;
-    proxy_hide_header Access-Control-Allow-Methods;
-
-    add_header Access-Control-Allow-Origin '*' always;
-    add_header Cache-Control 'public, max-age=86400' always;
-    add_header Content-Type 'text/vtt; charset=utf-8' always;
-  }
-
-  # Pattern 9: Sprite JPEG proxy
-  # /test/sprite-0.jpg -> /sprite/test.json/sprite-0.jpg
-  # /test/sprite-0-w200.jpg -> /sprite/test.json/sprite-0-w200.jpg
-  location ~ ^/([^/]+)/(sprite-[0-9].*\.jpg)$ {
-    proxy_http_version 1.1;
-    proxy_set_header Connection "";
-    proxy_set_header Host $host;
-    proxy_pass http://127.0.0.1:8889/sprite/$1.json/$2;
-
-    proxy_hide_header Access-Control-Allow-Origin;
-    proxy_hide_header Access-Control-Allow-Headers;
-    proxy_hide_header Access-Control-Allow-Methods;
-
-    add_header Access-Control-Allow-Origin '*' always;
-    # no 'always' so 429/5xx (e.g. limit_conn) are NOT cached as immutable
-    add_header Cache-Control 'public, max-age=31536000, immutable';
-    add_header Content-Type 'image/jpeg';
-  }
-
-  # Pattern 10: Catch-all for other files (MUST be LAST)
+  # Pattern 7: Catch-all for other files (MUST be AFTER Pattern 6)
   # /test/anything -> /hls/test.json/anything
   location ~ ^/([^/]+)/(.*)$ {
     if ($request_method = OPTIONS) {
@@ -777,7 +694,4 @@ log "  5. Services:"
 log "     systemctl status nginx-vod    # VOD server"
 log "     systemctl status nginx        # Public proxy"
 log ""
-log "  6. Thumbnail:"
-log "     /thumb/test.json/thumb-5000.jpg          (capture at 5s)"
-log "     /thumb/test.json/thumb-10000-w320.jpg    (capture at 10s, width 320px)"
-log ""
+log "Note: Thumbnail (/thumb/) is disabled. To enable, rebuild with FFmpeg 4.4 from source."

@@ -1,10 +1,11 @@
 module server-storage
 
-go 1.24
+go 1.25.5
 
 require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
+	github.com/zergolf1994/goose v0.2.0
 	go.mongodb.org/mongo-driver v1.17.9
 )
 

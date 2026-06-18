@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"server-storage/internal/lib/goose"
+	"github.com/zergolf1994/goose"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
