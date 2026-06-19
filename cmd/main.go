@@ -58,7 +58,6 @@ func main() {
 
 	log.Printf("📁 Storage Path: %s", storagePath)
 	log.Printf("🆔 Storage ID: %s", storageID)
-	log.Printf("🎬 VOD URL: %s", config.AppConfig.VodURL)
 
 	// Create cancellable context listening to OS signals for graceful shutdown
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -91,9 +90,6 @@ func main() {
 		StoragePath: storagePath,
 		StorageId:   storageID,
 	})
-
-	// Sprite generation worker (video_process, one job at a time)
-	go startSpriteWorker(ctx)
 
 	// Periodic cleanup of soft-deleted media (every 1 minute)
 	go func() {

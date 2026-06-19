@@ -13,7 +13,6 @@ import (
 const (
 	SettingDownloadEnabled = "download_enabled"
 	SettingURLScraping     = "url_scraping"
-	SettingSpriteEnabled   = "sprite_enabled"
 )
 
 // Setting represents a system setting key-value pair.

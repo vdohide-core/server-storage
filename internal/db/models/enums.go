@@ -96,18 +96,6 @@ const (
 
 const (
 	ResolutionOriginal = "original"
-	Resolution1080     = "1080"
-	Resolution720      = "720"
-	Resolution480      = "480"
-	Resolution360      = "360"
-)
-
-// ─── Process Types ───────────────────────────────────────────────────
-
-const (
-	ProcessTypeDownload  = "download"
-	ProcessTypeTranscode = "transcode"
-	ProcessTypeSprite    = "sprite"
 )
 
 // โ”€โ”€โ”€ Domain Statuses โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€โ”€
