@@ -308,6 +308,10 @@ http {
       add_header Access-Control-Allow-Headers '*';
       add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
       add_header Access-Control-Allow-Origin '*';
+      # generated sprite is deterministic per (video, page): let every layer
+      # (browser, Cloudflare, edge proxy_cache) cache it so it is generated once.
+      # No 'always' so 429/5xx (limit_req overflow) are not cached as immutable.
+      add_header Cache-Control 'public, max-age=31536000, immutable';
     }
 
     location /vod_status {
