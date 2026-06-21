@@ -13,6 +13,7 @@ INSTALL_PREFIX="/opt/nginx-vod"
 NGX_CONF="${INSTALL_PREFIX}/conf/nginx.conf"
 SKIP_BUILD="${SKIP_BUILD:-0}"   # 1 = skip compile, reuse existing binary
 CONFIG_ONLY="${CONFIG_ONLY:-0}" # 1 = rewrite config + systemd only (implies SKIP_BUILD=1)
+PROXY_ONLY="${PROXY_ONLY:-0}"   # 1 = rewrite port-80 local.conf only (implies CONFIG_ONLY=1)
 
 # ====================== Helpers =========================
 log(){ printf "\n\033[1;32m[INFO]\033[0m %s\n" "$*"; }
@@ -62,6 +63,7 @@ pick_cache_sizes(){
 
 # ====================== Main ===========================
 need_root
+[[ "${PROXY_ONLY}" == "1" ]] && CONFIG_ONLY=1
 [[ "${CONFIG_ONLY}" == "1" ]] && SKIP_BUILD=1
 
 WORKDIR="${HOME}/build/nginx-vod"
@@ -87,7 +89,12 @@ fi
 systemctl stop nginx-vod 2>/dev/null || true
 systemctl reset-failed nginx-vod 2>/dev/null || true
 
-if [[ "${SKIP_BUILD}" != "1" ]]; then
+if [[ "${PROXY_ONLY}" == "1" ]]; then
+  [[ -f "${INSTALL_PREFIX}/sbin/nginx" ]] || err "PROXY_ONLY=1 but ${INSTALL_PREFIX}/sbin/nginx missing"
+  install -d -m 0755 /etc/nginx/conf.d
+  log "PROXY_ONLY=1 — skip vod rebuild, deploy port 80 proxy only"
+else
+  if [[ "${SKIP_BUILD}" != "1" ]]; then
   cd "${WORKDIR}"
 
   # Download nginx source
@@ -133,12 +140,12 @@ if [[ "${SKIP_BUILD}" != "1" ]]; then
   if ! "${INSTALL_PREFIX}/sbin/nginx" -V 2>&1 | grep -qi ffmpeg; then
     log "⚠️  FFmpeg not linked — vod thumb will not work (check libavcodec-dev)"
   fi
-else
-  [[ -f "${INSTALL_PREFIX}/sbin/nginx" ]] || err "SKIP_BUILD=1 but ${INSTALL_PREFIX}/sbin/nginx missing"
-  log "Skipping build — using ${INSTALL_PREFIX}/sbin/nginx"
-fi
+  else
+    [[ -f "${INSTALL_PREFIX}/sbin/nginx" ]] || err "SKIP_BUILD=1 but ${INSTALL_PREFIX}/sbin/nginx missing"
+    log "Skipping build — using ${INSTALL_PREFIX}/sbin/nginx"
+  fi
 
-# Prepare directories
+  # Prepare directories
 log "Preparing directories..."
 install -d -m 0755 /var/log/nginx
 install -d -m 0755 "${MEDIA_ROOT}"
@@ -418,13 +425,16 @@ if ! systemctl start nginx-vod; then
 fi
 log "✅ nginx-vod service started"
 
+fi  # end PROXY_ONLY skip (vod setup)
+
 # =================== Write local.conf (public proxy) ===================
 install -d -m 0755 /etc/nginx/conf.d
 log "Writing /etc/nginx/conf.d/local.conf..."
 cat >/etc/nginx/conf.d/local.conf <<'NGX'
 # Public proxy server (port 80)
 server {
-  listen 80;
+  listen 80 default_server;
+  listen [::]:80 default_server;
   server_name _;
 
   # Default index — fake OSS error
@@ -756,6 +766,12 @@ NGX
 # Apply variable substitutions to local.conf
 sed -i "s|127.0.0.1:8889|127.0.0.1:${SERVER_PORT}|g" /etc/nginx/conf.d/local.conf
 
+# Default Ubuntu site also listens on :80 — disable it or our proxy never matches
+if [[ -e /etc/nginx/sites-enabled/default ]]; then
+  log "Disabling default nginx site (conflicts with VOD public proxy)..."
+  rm -f /etc/nginx/sites-enabled/default
+fi
+
 # Test and restart system nginx (package installed above)
 log "Testing system nginx configuration..."
 if ! nginx -t 2>&1; then
@@ -766,6 +782,11 @@ log "Restarting system nginx..."
 systemctl enable nginx 2>/dev/null || true
 systemctl restart nginx
 
+if ! curl -fsS "http://127.0.0.1/healthz" 2>/dev/null | grep -q '^ok'; then
+  err "public proxy not responding on :80/healthz — is /etc/nginx/conf.d/local.conf loaded?"
+fi
+log "✅ public proxy (port 80) healthz ok"
+
 # =================== Final verification ===================
 log "Verifying services..."
 sleep 2
@@ -773,6 +794,8 @@ sleep 2
 # Check nginx-vod is running
 if systemctl is-active --quiet nginx-vod; then
   log "✅ nginx-vod (port ${SERVER_PORT}) is running"
+elif [[ "${PROXY_ONLY}" == "1" ]]; then
+  log "⚠️  nginx-vod not running (PROXY_ONLY — start it manually if needed)"
 else
   err "nginx-vod failed to start"
 fi
@@ -821,4 +844,7 @@ log "     With width: http://YOUR_IP/test/thumb-10000-w320.jpg"
 log ""
 log "  7. Re-run without rebuild (fix config/systemd only):"
 log "     CONFIG_ONLY=1 bash install.sh"
+log ""
+log "  8. Deploy port 80 proxy only (vod already running on :8889):"
+log "     PROXY_ONLY=1 bash install.sh"
 log ""
