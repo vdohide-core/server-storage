@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# v6: Install nginx-vod-module — nginx 1.26.3 from source + static module
-# Features: HLS, DASH, Thumbnail, Sprite Sheet (via system FFmpeg)
+# v8: Install nginx-vod-module — nginx 1.26.3 + kaltura/nginx-vod-module (static)
+# HLS, DASH, Thumbnail (FFmpeg) — sprite via server-spritesheet on disk
 # Tested on Ubuntu 24.04
 set -euo pipefail
 
@@ -10,73 +10,143 @@ SEGMENT_DUR="${SEGMENT_DUR:-4000}"
 MEDIA_ROOT="${MEDIA_ROOT:-/home/files}"
 NGX_VERSION="1.26.3"
 INSTALL_PREFIX="/opt/nginx-vod"
+NGX_CONF="${INSTALL_PREFIX}/conf/nginx.conf"
+SKIP_BUILD="${SKIP_BUILD:-0}"   # 1 = skip compile, reuse existing binary
+CONFIG_ONLY="${CONFIG_ONLY:-0}" # 1 = rewrite config + systemd only (implies SKIP_BUILD=1)
 
 # ====================== Helpers =========================
 log(){ printf "\n\033[1;32m[INFO]\033[0m %s\n" "$*"; }
 err(){ printf "\n\033[1;31m[ERR ]\033[0m %s\n" "$*"; exit 1; }
 need_root(){ [[ $EUID -eq 0 ]] || err "Run as root (sudo)"; }
 
+ensure_mime_types(){
+  install -d -m 0755 "${INSTALL_PREFIX}/conf"
+  if [[ -f "${INSTALL_PREFIX}/conf/mime.types" ]]; then
+    return 0
+  fi
+  for src in \
+    "${WORKDIR}/nginx-${NGX_VERSION}/conf/mime.types" \
+    /usr/share/nginx/mime.types \
+    /etc/nginx/mime.types; do
+    if [[ -f "${src}" ]]; then
+      cp -f "${src}" "${INSTALL_PREFIX}/conf/mime.types"
+      log "mime.types copied from ${src}"
+      return 0
+    fi
+  done
+  err "mime.types not found — install nginx-common or run full build first"
+}
+
+vod_nginx_test(){
+  ensure_mime_types
+  log "Testing VOD nginx configuration..."
+  if ! "${INSTALL_PREFIX}/sbin/nginx" -t -c "${NGX_CONF}" 2>&1; then
+    err "nginx -t failed — see error above (${NGX_CONF})"
+  fi
+}
+
+pick_cache_sizes(){
+  local mem_mb
+  mem_mb="$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)"
+  if [[ "${mem_mb}" -lt 4096 ]]; then
+    VOD_METADATA_CACHE="${VOD_METADATA_CACHE:-256m}"
+    VOD_RESPONSE_CACHE="${VOD_RESPONSE_CACHE:-128m}"
+    VOD_MAPPING_CACHE="${VOD_MAPPING_CACHE:-64m}"
+    log "RAM ${mem_mb}MB — using small vod caches (${VOD_METADATA_CACHE}/${VOD_RESPONSE_CACHE}/${VOD_MAPPING_CACHE})"
+  else
+    VOD_METADATA_CACHE="${VOD_METADATA_CACHE:-2048m}"
+    VOD_RESPONSE_CACHE="${VOD_RESPONSE_CACHE:-512m}"
+    VOD_MAPPING_CACHE="${VOD_MAPPING_CACHE:-256m}"
+  fi
+}
+
 # ====================== Main ===========================
 need_root
-
-log "Installing dependencies..."
-apt update
-DEBIAN_FRONTEND=noninteractive apt -y install \
-  build-essential git curl ca-certificates \
-  libpcre2-dev zlib1g-dev libssl-dev \
-  libxml2-dev libxslt1-dev libgd-dev \
-  libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
-  nload
+[[ "${CONFIG_ONLY}" == "1" ]] && SKIP_BUILD=1
 
 WORKDIR="${HOME}/build/nginx-vod"
 mkdir -p "${WORKDIR}"
-cd "${WORKDIR}"
 
-# Download nginx source
-if [[ ! -f "nginx-${NGX_VERSION}.tar.gz" ]]; then
-  log "Downloading nginx-${NGX_VERSION} source..."
-  curl -fsSLo "nginx-${NGX_VERSION}.tar.gz" \
-    "https://nginx.org/download/nginx-${NGX_VERSION}.tar.gz"
+log "Installing dependencies..."
+apt update
+if [[ "${SKIP_BUILD}" == "1" ]]; then
+  DEBIAN_FRONTEND=noninteractive apt -y install \
+    curl ca-certificates nginx nginx-common
+else
+  DEBIAN_FRONTEND=noninteractive apt -y install \
+    build-essential git curl ca-certificates \
+    nginx nginx-common \
+    libpcre2-dev zlib1g-dev libssl-dev \
+    libxml2-dev libxslt1-dev libgd-dev \
+    libaio-dev \
+    libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libavfilter-dev \
+    nload
 fi
-rm -rf "nginx-${NGX_VERSION}"
-tar xzf "nginx-${NGX_VERSION}.tar.gz"
 
-# Clone Kaltura nginx-vod-module (latest)
-log "Cloning Kaltura nginx-vod-module..."
-rm -rf nginx-vod-module
-git clone --depth=1 https://github.com/vdohide/nginx-vod-module.git
+# Stop restart loop before rewriting config
+systemctl stop nginx-vod 2>/dev/null || true
+systemctl reset-failed nginx-vod 2>/dev/null || true
 
-# FFmpeg dev headers are installed for thumbnail support
-# nginx-vod-module auto-detects libavcodec/libswscale during configure
+if [[ "${SKIP_BUILD}" != "1" ]]; then
+  cd "${WORKDIR}"
 
-# Build nginx + vod module (STATIC, not dynamic)
-log "Building nginx ${NGX_VERSION} with vod module (static)..."
-cd "nginx-${NGX_VERSION}"
-./configure \
-  --prefix="${INSTALL_PREFIX}" \
-  --sbin-path="${INSTALL_PREFIX}/sbin/nginx" \
-  --conf-path="${INSTALL_PREFIX}/conf/nginx.conf" \
-  --error-log-path=/var/log/nginx/vod-error.log \
-  --http-log-path=/var/log/nginx/vod-access.log \
-  --pid-path=/run/nginx-vod.pid \
-  --with-http_ssl_module \
-  --with-http_sub_module \
-  --with-http_gzip_static_module \
-  --with-threads \
-  --add-module=../nginx-vod-module
+  # Download nginx source
+  if [[ ! -f "nginx-${NGX_VERSION}.tar.gz" ]]; then
+    log "Downloading nginx-${NGX_VERSION} source..."
+    curl -fsSLo "nginx-${NGX_VERSION}.tar.gz" \
+      "https://nginx.org/download/nginx-${NGX_VERSION}.tar.gz"
+  fi
+  rm -rf "nginx-${NGX_VERSION}"
+  tar xzf "nginx-${NGX_VERSION}.tar.gz"
 
-make -j"$(nproc)"
-make install
+  # Clone upstream Kaltura nginx-vod-module
+  log "Cloning kaltura/nginx-vod-module..."
+  rm -rf nginx-vod-module
+  git clone --depth=1 https://github.com/kaltura/nginx-vod-module.git
 
-[[ -f "${INSTALL_PREFIX}/sbin/nginx" ]] || err "Build failed"
-log "nginx binary: ${INSTALL_PREFIX}/sbin/nginx"
-${INSTALL_PREFIX}/sbin/nginx -V 2>&1 | head -3
+  # Build nginx + vod module (STATIC, not dynamic)
+  log "Building nginx ${NGX_VERSION} with vod module (static)..."
+  cd "nginx-${NGX_VERSION}"
+  ./configure \
+    --prefix="${INSTALL_PREFIX}" \
+    --sbin-path="${INSTALL_PREFIX}/sbin/nginx" \
+    --conf-path="${NGX_CONF}" \
+    --error-log-path=/var/log/nginx/vod-error.log \
+    --http-log-path=/var/log/nginx/vod-access.log \
+    --pid-path=/run/nginx-vod.pid \
+    --with-http_ssl_module \
+    --with-http_sub_module \
+    --with-http_gzip_static_module \
+    --with-threads \
+    --with-file-aio \
+    --add-module=../nginx-vod-module
+
+  make -j"$(nproc)"
+  make install
+
+  [[ -f "${INSTALL_PREFIX}/sbin/nginx" ]] || err "Build failed"
+  if ! grep -q ngx_http_vod_module "${WORKDIR}/nginx-${NGX_VERSION}/objs/ngx_modules.c" 2>/dev/null; then
+    err "vod module was not compiled — check ../nginx-vod-module path"
+  fi
+  log "nginx binary: ${INSTALL_PREFIX}/sbin/nginx"
+  "${INSTALL_PREFIX}/sbin/nginx" -V 2>&1 | head -5
+  if ! "${INSTALL_PREFIX}/sbin/nginx" -V 2>&1 | grep -qi ffmpeg; then
+    log "⚠️  FFmpeg not linked — vod thumb will not work (check libavcodec-dev)"
+  fi
+else
+  [[ -f "${INSTALL_PREFIX}/sbin/nginx" ]] || err "SKIP_BUILD=1 but ${INSTALL_PREFIX}/sbin/nginx missing"
+  log "Skipping build — using ${INSTALL_PREFIX}/sbin/nginx"
+fi
 
 # Prepare directories
 log "Preparing directories..."
+install -d -m 0755 /var/log/nginx
 install -d -m 0755 "${MEDIA_ROOT}"
 install -d -m 0755 /var/cache/nginx/vod
 chown -R www-data:www-data "${MEDIA_ROOT}" /var/cache/nginx/vod
+
+ensure_mime_types
+pick_cache_sizes
 
 # =================== Disable system nginx vod ===================
 # If system nginx has vod.conf, disable it to free port 8889
@@ -98,7 +168,7 @@ events {
 }
 
 http {
-  include /etc/nginx/mime.types;
+  include ${INSTALL_PREFIX}/conf/mime.types;
   default_type application/octet-stream;
 
   sendfile on;
@@ -109,20 +179,12 @@ http {
   gzip on;
   gzip_types application/vnd.apple.mpegurl application/dash+xml text/xml text/vtt application/json;
 
-  # Throttle sprite generation to protect CPU WITHOUT dropping requests.
-  # limit_req queues excess requests and releases them at 'rate'; with a large
-  # 'burst' the queue effectively never overflows, so nothing is rejected -
-  # requests just WAIT their turn and are answered when ready.
-  # rate=8r/s caps sustained CPU; burst=300 holds a full fast-scrub queue.
-  limit_req_zone \$server_name zone=sprite_gen:10m rate=8r/s;
-  limit_req_status 429;
-
-  # VOD global settings
-  aio threads;
+  # VOD global settings (aio on — kaltura default; needs --with-file-aio)
+  aio on;
   vod_initial_read_size 16m;
   vod_max_metadata_size 512m;
-  vod_metadata_cache metadata_cache 2048m;
-  vod_response_cache response_cache 512m;
+  vod_metadata_cache metadata_cache ${VOD_METADATA_CACHE};
+  vod_response_cache response_cache ${VOD_RESPONSE_CACHE};
   vod_output_buffer_pool 4m 64;
   vod_performance_counters perf_counters;
   vod_last_modified 'Sun, 19 Nov 2000 08:52:00 GMT';
@@ -160,7 +222,7 @@ http {
     vod_upstream_location /json;
 
     # mapping cache
-    vod_mapping_cache mapping_cache 256m;
+    vod_mapping_cache mapping_cache ${VOD_MAPPING_CACHE};
 
     # Support for large files
     vod_max_mapping_response_size 128m;
@@ -279,7 +341,7 @@ http {
       expires 1h;
     }
 
-    # Thumbnail capture
+    # Thumbnail capture (requires FFmpeg at build time)
     location /thumb/ {
       vod thumb;
       vod_thumb_accurate_positioning off;
@@ -288,30 +350,6 @@ http {
       add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
       add_header Access-Control-Allow-Origin '*';
       add_header Cache-Control 'public, max-age=31536000, immutable' always;
-    }
-
-    # Sprite sheet (6x6 grid, 1s interval)
-    # height-primary: fixed tile height (160px), width derived from aspect ratio
-    # so portrait/landscape videos share the same tile height.
-    location /sprite/ {
-      vod sprite;
-      vod_sprite_cols 6;
-      vod_sprite_rows 6;
-      vod_sprite_interval 1000;
-      vod_sprite_tile_height 168;
-
-      # Queue (don't reject) sprite generation: excess requests WAIT in the queue
-      # and are served at the zone rate. Large burst => effectively no 429, every
-      # request gets answered (just later). No 'nodelay' so they are delayed, not dropped.
-      limit_req zone=sprite_gen burst=300;
-
-      add_header Access-Control-Allow-Headers '*';
-      add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS';
-      add_header Access-Control-Allow-Origin '*';
-      # generated sprite is deterministic per (video, page): let every layer
-      # (browser, Cloudflare, edge proxy_cache) cache it so it is generated once.
-      # No 'always' so 429/5xx (limit_req overflow) are not cached as immutable.
-      add_header Cache-Control 'public, max-age=31536000, immutable';
     }
 
     location /vod_status {
@@ -325,23 +363,41 @@ http {
 }
 CONF
 
+# ── Config test BEFORE systemd (fail fast with visible error) ──
+vod_nginx_test
+
+# Free port / stale pid
+if [[ -f /run/nginx-vod.pid ]]; then
+  old_pid="$(cat /run/nginx-vod.pid 2>/dev/null || true)"
+  if [[ -n "${old_pid}" ]] && kill -0 "${old_pid}" 2>/dev/null; then
+    log "Stopping stale nginx-vod (pid ${old_pid})..."
+    kill -QUIT "${old_pid}" 2>/dev/null || true
+    sleep 1
+  fi
+  rm -f /run/nginx-vod.pid
+fi
+if ss -tlnp 2>/dev/null | grep -q ":${SERVER_PORT} "; then
+  log "⚠️  Port ${SERVER_PORT} still in use:"
+  ss -tlnp | grep ":${SERVER_PORT} " || true
+  err "Port ${SERVER_PORT} is busy — stop the other process first"
+fi
+
 # =================== Systemd service ===================
 log "Creating systemd service..."
-cat >/etc/systemd/system/nginx-vod.service <<'SVC'
+cat >/etc/systemd/system/nginx-vod.service <<SVC
 [Unit]
-Description=nginx VOD server (1.26.3 + vod module)
+Description=nginx VOD server (${NGX_VERSION} + vod module)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=forking
 PIDFile=/run/nginx-vod.pid
-ExecStartPre=/opt/nginx-vod/sbin/nginx -t
-ExecStart=/opt/nginx-vod/sbin/nginx
-ExecReload=/bin/kill -s HUP $MAINPID
-ExecStop=/bin/kill -s QUIT $MAINPID
+ExecStartPre=${INSTALL_PREFIX}/sbin/nginx -t -c ${NGX_CONF}
+ExecStart=${INSTALL_PREFIX}/sbin/nginx -c ${NGX_CONF}
+ExecReload=/bin/kill -s HUP \$MAINPID
+ExecStop=/bin/kill -s QUIT \$MAINPID
 LimitNOFILE=65535
-PrivateTmp=true
 Restart=on-failure
 RestartSec=5
 
@@ -350,13 +406,20 @@ WantedBy=multi-user.target
 SVC
 
 # Stop if already running
-${INSTALL_PREFIX}/sbin/nginx -s stop 2>/dev/null || true
+"${INSTALL_PREFIX}/sbin/nginx" -s stop -c "${NGX_CONF}" 2>/dev/null || true
 
 systemctl daemon-reload
 systemctl enable nginx-vod
-systemctl start nginx-vod
+if ! systemctl start nginx-vod; then
+  log "❌ systemctl start failed — diagnostics:"
+  "${INSTALL_PREFIX}/sbin/nginx" -t -c "${NGX_CONF}" 2>&1 || true
+  journalctl -xeu nginx-vod.service --no-pager | tail -25 || true
+  err "nginx-vod failed to start"
+fi
+log "✅ nginx-vod service started"
 
 # =================== Write local.conf (public proxy) ===================
+install -d -m 0755 /etc/nginx/conf.d
 log "Writing /etc/nginx/conf.d/local.conf..."
 cat >/etc/nginx/conf.d/local.conf <<'NGX'
 # Public proxy server (port 80)
@@ -640,43 +703,7 @@ server {
     add_header Content-Type 'image/jpeg' always;
   }
 
-  # Pattern 8: Sprite WebVTT proxy
-  # /test/sprite.vtt -> /sprite/test.json/sprite.vtt
-  location ~ ^/([^/]+)/sprite\.vtt$ {
-    proxy_http_version 1.1;
-    proxy_set_header Connection "";
-    proxy_set_header Host $host;
-    proxy_pass http://127.0.0.1:8889/sprite/$1.json/sprite.vtt;
-
-    proxy_hide_header Access-Control-Allow-Origin;
-    proxy_hide_header Access-Control-Allow-Headers;
-    proxy_hide_header Access-Control-Allow-Methods;
-
-    add_header Access-Control-Allow-Origin '*' always;
-    add_header Cache-Control 'public, max-age=86400' always;
-    add_header Content-Type 'text/vtt; charset=utf-8' always;
-  }
-
-  # Pattern 9: Sprite JPEG proxy
-  # /test/sprite-0.jpg -> /sprite/test.json/sprite-0.jpg
-  # /test/sprite-0-w200.jpg -> /sprite/test.json/sprite-0-w200.jpg
-  location ~ ^/([^/]+)/(sprite-[0-9].*\.jpg)$ {
-    proxy_http_version 1.1;
-    proxy_set_header Connection "";
-    proxy_set_header Host $host;
-    proxy_pass http://127.0.0.1:8889/sprite/$1.json/$2;
-
-    proxy_hide_header Access-Control-Allow-Origin;
-    proxy_hide_header Access-Control-Allow-Headers;
-    proxy_hide_header Access-Control-Allow-Methods;
-
-    add_header Access-Control-Allow-Origin '*' always;
-    # no 'always' so 429/5xx (e.g. limit_req overflow) are NOT cached as immutable
-    add_header Cache-Control 'public, max-age=31536000, immutable';
-    add_header Content-Type 'image/jpeg';
-  }
-
-  # Pattern 10: Catch-all for other files (MUST be LAST)
+  # Pattern 8: Catch-all for other files (MUST be LAST)
   # /test/anything -> /hls/test.json/anything
   location ~ ^/([^/]+)/(.*)$ {
     if ($request_method = OPTIONS) {
@@ -729,11 +756,14 @@ NGX
 # Apply variable substitutions to local.conf
 sed -i "s|127.0.0.1:8889|127.0.0.1:${SERVER_PORT}|g" /etc/nginx/conf.d/local.conf
 
-# Test and restart system nginx
+# Test and restart system nginx (package installed above)
 log "Testing system nginx configuration..."
-nginx -t
+if ! nginx -t 2>&1; then
+  err "system nginx -t failed — check /etc/nginx/conf.d/local.conf"
+fi
 
 log "Restarting system nginx..."
+systemctl enable nginx 2>/dev/null || true
 systemctl restart nginx
 
 # =================== Final verification ===================
@@ -785,6 +815,10 @@ log "     systemctl status nginx-vod    # VOD server"
 log "     systemctl status nginx        # Public proxy"
 log ""
 log "  6. Thumbnail:"
-log "     /thumb/test.json/thumb-5000.jpg          (capture at 5s)"
-log "     /thumb/test.json/thumb-10000-w320.jpg    (capture at 10s, width 320px)"
+log "     Internal:  http://YOUR_IP:${SERVER_PORT}/thumb/test.json/thumb-5000.jpg"
+log "     Public:    http://YOUR_IP/test/thumb-5000.jpg"
+log "     With width: http://YOUR_IP/test/thumb-10000-w320.jpg"
+log ""
+log "  7. Re-run without rebuild (fix config/systemd only):"
+log "     CONFIG_ONLY=1 bash install.sh"
 log ""
